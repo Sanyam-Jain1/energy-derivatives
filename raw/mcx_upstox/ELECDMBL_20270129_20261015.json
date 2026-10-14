@@ -1,0 +1,17 @@
+{
+ "instrument": {
+  "instrument_key": "MCX_FO|587175",
+  "trading_symbol": "ELECDMBL FUT 29 JAN 27",
+  "expiry": 1801247399000,
+  "lot_size": 50
+ },
+ "expiry_date": "2027-01-29",
+ "fetched_at": "2026-10-15T03:27:00+05:30",
+ "url": "https://api.upstox.com/v2/historical-candle/MCX_FO%7C587175/day/2026-10-15/2025-07-10",
+ "answer": {
+  "status": "success",
+  "data": {
+   "candles": []
+  }
+ }
+}
