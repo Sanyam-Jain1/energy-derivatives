@@ -8,6 +8,8 @@ One file, standard library plus pandas. Run from the terminal:
     python futures.py convergence            # how fast the month's index becomes known
     python futures.py export                 # CSVs for the dashboard -> data/dashboard/
     python futures.py fetch --month 2026-10  # current month to date from IEX (slow, polite)
+    python futures.py nse-bhavcopy           # NSE electricity futures, every trading day
+    python futures.py mcx-upstox             # MCX near contract, last ~20 days, from Upstox
 
 IEX data. Complete months come from the sibling power_market repo
 (../power_market/raw/dam, or $POWER_MARKET_DIR), parsed with its own
@@ -34,10 +36,12 @@ All dates are Indian Standard Time.
 import argparse
 import csv
 import hashlib
+import json
 import os
 import re
 import sys
 import time as clock
+import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -288,6 +292,129 @@ def cmd_convergence(args):
     print(f"wrote {(DATA_DIR / 'convergence_errors.csv').relative_to(ROOT)}")
 
 
+# ---------------------------------------------------------------- MCX daily prices
+
+UPSTOX_URL = "https://upstox.com/commodity-market-trading/mcx-elecdmbl-price/"
+MCX_COLUMNS = ["trade_date", "contract", "open", "high", "low", "close_rs_mwh", "date_inferred", "source"]
+
+
+def cmd_mcx_upstox(args):
+    """MCX ELECDMBL daily OHLC from Upstox's quote page (about the last 20 trading days, near
+    contract only). MCX's own site refuses scripted requests, so this is a stopgap until the
+    MCX bhavcopy is loaded: rows are tagged source=upstox, and a row from any other source
+    for the same day and contract is kept as it is."""
+    req = urllib.request.Request(UPSTOX_URL, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        text = resp.read().decode("utf-8").replace('\\"', '"')
+    m = re.search(r'"priceHistory":(\[[^\]]*\])', text)
+    if not m:
+        sys.exit("no priceHistory on the Upstox page; its layout may have changed")
+    rows = []
+    for r in json.loads(m.group(1)):
+        day = datetime.fromtimestamp(r["date"] / 1000, IST).date()
+        expiry = datetime.strptime(r["expiryDate"], "%d %b, %y").date()
+        rows.append({"trade_date": day.isoformat(), "contract": f"{expiry:%Y-%m}",
+                     "open": r["open"] / 100, "high": r["high"] / 100, "low": r["low"] / 100,
+                     "close_rs_mwh": r["close"] / 100, "date_inferred": 0, "source": "upstox"})
+    new = pd.DataFrame(rows)
+    have = pd.read_csv(MCX_DAILY, dtype={"contract": str})
+    for c in MCX_COLUMNS:
+        if c not in have:
+            have[c] = None
+    keyed = have.set_index(["trade_date", "contract"])
+    changed = []
+    for _, r in new.iterrows():
+        k = (r.trade_date, r.contract)
+        if k in keyed.index and not str(keyed.loc[k, "source"]).startswith("notes"):
+            continue  # keep bhavcopy (or other better) rows
+        if k in keyed.index and float(keyed.loc[k, "close_rs_mwh"]) != r.close_rs_mwh:
+            changed.append(f"{r.trade_date} {r.contract}: {keyed.loc[k, 'close_rs_mwh']} -> {r.close_rs_mwh}")
+        keyed.loc[k, MCX_COLUMNS[2:]] = [r[c] for c in MCX_COLUMNS[2:]]
+    out = keyed.reset_index()[MCX_COLUMNS].sort_values(["trade_date", "contract"])
+    out["date_inferred"] = out.date_inferred.fillna(0).astype(int)
+    out.to_csv(MCX_DAILY, index=False)
+    print(f"wrote {MCX_DAILY.relative_to(ROOT)}  {len(out)} rows; Upstox gave {len(new)} days, "
+          f"{new.trade_date.min()} to {new.trade_date.max()}")
+    for c in changed:
+        print(f"  close differs from earlier row: {c}")
+
+
+# ---------------------------------------------------------------- NSE bhavcopy
+
+NSE_BHAVCOPY_URL = ("https://nsearchives.nseindia.com/content/com/"
+                    "BhavCopy_NSE_CO_0_0_0_{d:%Y%m%d}_F_0000.csv.zip")
+NSE_BHAVCOPY_CSV = DATA_DIR / "nse_bhavcopy.csv"
+NSE_LAUNCH = date(2025, 7, 14)
+NSE_DELAY_SECONDS = 3
+NSE_FIELDS = {  # our column -> bhavcopy (UDiFF) column
+    "trade_date": "TradDt", "instrument": "FinInstrmNm", "expiry": "XpryDt",
+    "open": "OpnPric", "high": "HghPric", "low": "LwPric", "close": "ClsPric",
+    "settle": "SttlmPric", "prev_close": "PrvsClsgPric", "lots": "TtlTradgVol",
+    "value_rs": "TtlTrfVal", "trades": "TtlNbOfTxsExctd", "open_interest": "OpnIntrst",
+}
+
+
+def log_manifest(row):
+    new = not MANIFEST.exists()
+    with MANIFEST.open("a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["path", "url", "fetched_at", "status", "bytes", "sha256"])
+        w.writerow(row)
+
+
+def cmd_nse_bhavcopy(args):
+    """Electricity futures (ELECMBL) rows from NSE's daily commodity bhavcopy, one file per trading day.
+
+    Only the electricity rows are kept (data/nse_bhavcopy.csv); every request is logged in
+    raw/manifest.csv with the zip's sha256. Days already in the CSV are skipped. A 404 is a
+    holiday; anything else stops the run.
+    """
+    import io
+    import zipfile
+    have = pd.read_csv(NSE_BHAVCOPY_CSV, dtype=str) if NSE_BHAVCOPY_CSV.exists() else pd.DataFrame(columns=["contract", *NSE_FIELDS])
+    done = set(have.trade_date)
+    first = date.fromisoformat(args.start) if args.start else NSE_LAUNCH
+    last = date.fromisoformat(args.end) if args.end else datetime.now(IST).date()
+    todo = [first + timedelta(days=i) for i in range((last - first).days + 1)]
+    todo = [d for d in todo if d.weekday() < 5 and d.isoformat() not in done]
+    print(f"{len(todo)} weekdays to fetch, about {len(todo) * NSE_DELAY_SECONDS // 60 + 1} min")
+    rows, holidays = [], []
+    try:
+        for i, d in enumerate(todo):
+            if i:
+                clock.sleep(NSE_DELAY_SECONDS)
+            url = NSE_BHAVCOPY_URL.format(d=d)
+            now = datetime.now(IST).isoformat(timespec="seconds")
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    body = resp.read()
+            except urllib.error.HTTPError as e:
+                log_manifest(["", url, now, e.code, 0, ""])
+                if e.code == 404:
+                    holidays.append(d.isoformat())
+                    continue
+                sys.exit(f"stopped at {d}: HTTP {e.code}")
+            log_manifest(["", url, now, 200, len(body), hashlib.sha256(body).hexdigest()])
+            with zipfile.ZipFile(io.BytesIO(body)) as z:
+                text = z.read(z.namelist()[0]).decode("utf-8")
+            day = [r for r in csv.DictReader(io.StringIO(text)) if r["TckrSymb"] == "ELECMBL"]
+            for r in day:
+                row = {ours: r[theirs] for ours, theirs in NSE_FIELDS.items()}
+                row["contract"] = row["expiry"][:7]
+                rows.append(row)
+            print(f"  {d}  {len(day)} contracts")
+    finally:  # keep what was fetched even if a later day stops the run
+        if rows:
+            out = pd.concat([have, pd.DataFrame(rows)]).drop_duplicates(["trade_date", "instrument"], keep="last")
+            out = out[["trade_date", "contract", *[c for c in NSE_FIELDS if c != "trade_date"]]]
+            out.sort_values(["trade_date", "contract"]).to_csv(NSE_BHAVCOPY_CSV, index=False)
+            print(f"wrote {NSE_BHAVCOPY_CSV.relative_to(ROOT)}  {len(out)} rows, {out.trade_date.nunique()} days")
+        if holidays:
+            print(f"  no file (holiday) for {len(holidays)} days: {', '.join(holidays)}")
+
+
 # ---------------------------------------------------------------- dashboard data
 
 DASHBOARD_DIR = DATA_DIR / "dashboard"
@@ -390,12 +517,16 @@ def main():
     fv.add_argument("--as-of", help="trading day (YYYY-MM-DD); default: latest the data allows")
     fv.add_argument("--rest", type=float, help="assumed average for unknown days (Rs/MWh)")
     sub.add_parser("convergence", help="estimate error vs final index, by days known")
+    nb = sub.add_parser("nse-bhavcopy", help="fetch NSE electricity futures from the daily commodity bhavcopy")
+    nb.add_argument("--from", dest="start", help="first trade date, YYYY-MM-DD (default: launch, 2025-07-14)")
+    nb.add_argument("--to", dest="end", help="last trade date (default: today, IST)")
+    sub.add_parser("mcx-upstox", help="add MCX daily prices from Upstox (last ~20 days)")
     sub.add_parser("export", help="write the dashboard's CSVs to data/dashboard/")
     fe = sub.add_parser("fetch", help="fetch one month of IEX DAM up to the latest published day")
     fe.add_argument("--month", required=True, help="YYYY-MM")
     args = p.parse_args()
     {"daily": cmd_daily, "index": cmd_index, "fairvalue": cmd_fairvalue,
-     "convergence": cmd_convergence, "export": cmd_export, "fetch": cmd_fetch}[args.cmd](args)
+     "convergence": cmd_convergence, "export": cmd_export, "fetch": cmd_fetch, "nse-bhavcopy": cmd_nse_bhavcopy, "mcx-upstox": cmd_mcx_upstox}[args.cmd](args)
 
 
 if __name__ == "__main__":
