@@ -72,9 +72,10 @@ across exchanges rather than IEX alone.
 ### Checks (`python futures.py check`)
 
 - Every traded row has low <= open, close <= high, and NSE's value / MWh inside the day's range.
-- 18 NSE rows trade more than 9% away from the previous day's settlement. All are on
-  thinly traded far contracts, mostly just after the nearer contract expires, when the
-  previous settlement was a theoretical price. They are kept as published.
+- 18 NSE rows trade more than 9% away from the previous day's settlement (list them with
+  `check --show 20`). Most are on contracts that trade only now and then, where the
+  previous settlement was a theoretical price, but not all (e.g. Feb-26 on 2 Feb 2026).
+  Not yet explained; kept as published.
 
 ## data/futures_daily.csv
 
