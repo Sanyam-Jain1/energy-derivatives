@@ -21,7 +21,9 @@ Clone `power_market` next to this repo (or set `POWER_MARKET_DIR`). Python 3 wit
     python futures.py index                  # monthly settlement index vs MCX/NSE finals
     python futures.py fairvalue --month 2026-10 [--as-of 2026-10-08] [--rest 7000]
     python futures.py convergence            # how fast a month's index becomes known
+    python futures.py export                 # dashboard CSVs -> data/dashboard/
     python futures.py fetch --month 2026-10  # current month to date from IEX
+    python analysis/analog_years.py          # does the same month in past years help?
 
 `fairvalue` treats a close on trading day T as knowing DAM delivery days up to T+1
 (DAM results are out by 15:00, MCX trades until 23:30). For each close it prints
@@ -34,6 +36,7 @@ average the unknown days would need for that close to equal the final index.
 |---|---|---|
 | `data/iex_dam_daily.csv` | one row per delivery day: simple and volume-weighted price, min, max, cleared and scheduled MWh | `daily` |
 | `data/iex_dam_monthly.csv` | MCX index, simple average, block volume-weighted average, exchange finals | `index` |
+| `data/dashboard/*.csv` | the dashboard's data, all from the functions above | `export` |
 | `data/convergence_errors.csv` | estimate error vs final, every month and number of known days | `convergence` |
 | `data/mcx_settlements.csv` | MCX final settlement prices | by hand from notes |
 | `data/nse_settlements.csv` | NSE final settlement prices | by hand from notes |
@@ -62,14 +65,30 @@ approximate forward-curve levels from 8–9 Oct.
    days known it misses by 9.3%, with 21 days by 4.5%, and with 25 days by 2.3%
    (41 months, May 2023 to Sep 2026). This is the benchmark the futures price has to
    beat, and the within-month edge only gets sharp in the last 10 days or so.
+4. **October usually falls in its second half.** In 2023, 2024 and 2025, days 16–31
+   ran 40%, 13% and 14% below days 9–15. No other calendar month is that consistent.
+   Scaling the estimate by the same month in earlier years does not help in general
+   (it misses by 19.1% vs 15.7% before the month), so the tool keeps the plain
+   estimate and October is a caveat (`analysis/analog_years.py`).
+5. **Oct-26 so far (to the 14 Oct close, 15 of 31 days known).** The index so far is
+   7,679 and the plain estimate is 7,769. The last close on file, 7,185 on 8 Oct,
+   implied 7,012 for the 22 days then unknown. The six days since came in at
+   7,617–8,077. If October falls late as in past years, 7,185 is not obviously cheap.
+
+## Dashboard
+
+[Power Futures Desk](https://claude.ai/artifact/7PpCzq7SFmRQcNkFMr7e7x): pick a
+contract month to see its daily prices, running index, estimate and futures closes,
+plus the daily price history, forward curve, hourly shape, settlement averages and
+estimate error. Refresh its data with `python futures.py export`, then re-upload the
+CSVs in `data/dashboard/`.
 
 ## Next steps
 
-- [ ] Fetch October 2026 to date (`fetch --month 2026-10`, then `daily`). The IEX,
-      MCX and NSE sites are blocked from the cloud environment this was built in,
-      so run it locally.
+- [x] Fetch October 2026 to date (`raw/dam/dam_2026-10_to_15.html`).
 - [ ] Get MCX bhavcopy for every contract since Jul 2025 to replace the hand-entered
-      closes and check the inferred dates.
+      closes and check the inferred dates. The MCX and NSE sites refuse scripted
+      requests (Akamai bot block), so download them by hand.
 - [ ] Get NSE monthly finals to test the volume-weighting explanation (finding 2).
 - [ ] With real daily closes, compare each close with the estimate and with what
       the close implies for the remaining days. Test whether the futures move

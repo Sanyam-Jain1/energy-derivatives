@@ -6,6 +6,7 @@ One file, standard library plus pandas. Run from the terminal:
     python futures.py index                  # monthly settlement index vs MCX/NSE finals
     python futures.py fairvalue --month 2026-10 [--as-of 2026-10-08] [--rest 7000]
     python futures.py convergence            # how fast the month's index becomes known
+    python futures.py export                 # CSVs for the dashboard -> data/dashboard/
     python futures.py fetch --month 2026-10  # current month to date from IEX (slow, polite)
 
 IEX data. Complete months come from the sibling power_market repo
@@ -38,7 +39,7 @@ import re
 import sys
 import time as clock
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -59,6 +60,7 @@ CAP_START = date(2023, 4, 4)       # Rs 10/kWh cap; months before it are a diffe
 RECENT_DAYS = 7                    # window for the "rest of month looks like last week" estimate
 FETCH_DELAY_SECONDS = 10
 USER_AGENT = "futures-research/0.1 (research; one request per 10 s)"
+IST = timezone(timedelta(hours=5, minutes=30))  # India has no daylight saving
 PARTIAL_RE = re.compile(r"^dam_(\d{4}-\d\d)(?:_to_(\d\d))?\.html$")
 
 
@@ -92,29 +94,36 @@ def raw_files():
     return complete + [p for *_, p in sorted(partial, reverse=True)]
 
 
-def cmd_daily(args):
-    """One row per delivery day. Volumes in MWh (sum of 15-min MW / 4)."""
+def load_blocks():
+    """Traded DAM blocks, one version per delivery day (see raw_files for which file wins)."""
     bess = load_bess()
-    seen, rows = set(), []
+    seen, parts = set(), []
     for path in raw_files():
         blocks = pd.DataFrame(bess.parse_snapshot("DAM", path.read_text()))
-        for d, b in blocks.groupby("delivery_date"):
-            if d in seen:
-                continue
-            seen.add(d)
-            traded = b[~((b.mcv_mw == 0) & (b.mcp_rs_mwh == 0))]  # no-trade blocks are not Rs 0 prices
-            rows.append({
-                "delivery_date": d,
-                "blocks": len(traded),
-                "avg_mcp": round(traded.mcp_rs_mwh.mean(), 2),
-                "vw_mcp": round((traded.mcp_rs_mwh * traded.mcv_mw).sum() / traded.mcv_mw.sum(), 2),
-                "min_mcp": traded.mcp_rs_mwh.min(),
-                "max_mcp": traded.mcp_rs_mwh.max(),
-                "mcv_mwh": round(traded.mcv_mw.sum() / 4, 2),
-                "fsv_mwh": round(traded.final_scheduled_volume_mw.sum() / 4, 2),
-                "source": f"{path.parents[2].name}/{path.relative_to(path.parents[2]).as_posix()}",
-            })
-    df = pd.DataFrame(rows).sort_values("delivery_date")
+        blocks = blocks[~blocks.delivery_date.isin(seen)]
+        seen.update(blocks.delivery_date)
+        blocks["source"] = f"{path.parents[2].name}/{path.relative_to(path.parents[2]).as_posix()}"
+        parts.append(blocks)
+    blocks = pd.concat(parts)
+    return blocks[~((blocks.mcv_mw == 0) & (blocks.mcp_rs_mwh == 0))]  # no-trade blocks are not Rs 0 prices
+
+
+def cmd_daily(args):
+    """One row per delivery day. Volumes in MWh (sum of 15-min MW / 4)."""
+    rows = []
+    for d, b in load_blocks().groupby("delivery_date"):
+        rows.append({
+            "delivery_date": d,
+            "blocks": len(b),
+            "avg_mcp": round(b.mcp_rs_mwh.mean(), 2),
+            "vw_mcp": round((b.mcp_rs_mwh * b.mcv_mw).sum() / b.mcv_mw.sum(), 2),
+            "min_mcp": b.mcp_rs_mwh.min(),
+            "max_mcp": b.mcp_rs_mwh.max(),
+            "mcv_mwh": round(b.mcv_mw.sum() / 4, 2),
+            "fsv_mwh": round(b.final_scheduled_volume_mw.sum() / 4, 2),
+            "source": b.source.iloc[0],
+        })
+    df = pd.DataFrame(rows)
     short = df[df.blocks != 96]
     DATA_DIR.mkdir(exist_ok=True)
     df.to_csv(DAILY_CSV, index=False)
@@ -138,9 +147,9 @@ def settlement_index(days):
 
 # ---------------------------------------------------------------- monthly index vs exchange finals
 
-def cmd_index(args):
-    df = load_daily()
-    df["pv"] = df.vw_mcp * df.mcv_mwh
+def monthly_table(df):
+    """Per month: MCX index, simple and block volume-weighted averages, exchange finals."""
+    df = df.assign(pv=df.vw_mcp * df.mcv_mwh)
     g = df.groupby("month")
     m = pd.DataFrame({
         "days": g.size(),
@@ -152,6 +161,11 @@ def cmd_index(args):
     for name, path in (("mcx_final", MCX_SETTLEMENTS), ("nse_final", NSE_SETTLEMENTS)):
         s = pd.read_csv(path, dtype={"contract": str}).set_index("contract").final_settlement_rs_mwh
         m[name] = s
+    return m
+
+
+def cmd_index(args):
+    m = monthly_table(load_daily())
     m.round(2).to_csv(MONTHLY_CSV, index_label="month")
     print(f"wrote {MONTHLY_CSV.relative_to(ROOT)}  {len(m)} months")
 
@@ -208,7 +222,7 @@ def cmd_fairvalue(args):
     closes = pd.read_csv(MCX_DAILY, parse_dates=["trade_date"], dtype={"contract": str})
     closes = closes[closes.contract == args.month].sort_values("trade_date")
     last_data = df.delivery_date.max().date()
-    as_of = date.fromisoformat(args.as_of) if args.as_of else min(date.today(), last_data - timedelta(days=1))
+    as_of = date.fromisoformat(args.as_of) if args.as_of else min(datetime.now(IST).date(), last_data - timedelta(days=1))
     if as_of + timedelta(days=1) > last_data and as_of < month_days(args.month)[-1]:
         print(f"note: IEX data ends {last_data}; days after it count as unknown")
 
@@ -236,13 +250,9 @@ def cmd_fairvalue(args):
 
 # ---------------------------------------------------------------- how fast the month becomes known
 
-def cmd_convergence(args):
-    """Error of the fair-value estimate vs the final index, by how many days of the month are known.
-
-    Every complete month after the Rs 10 cap, from 0 known days (the close two days before the
-    month starts) to all but one. The rest of the month is assumed to look like the last 7 known days.
-    """
-    df = load_daily()
+def convergence_errors(df):
+    """Every complete month after the Rs 10 cap, from 0 known days (the close two days before the
+    month starts) to all but one: estimate error vs the final index, in %."""
     months = [m for m, g in df.groupby("month")
               if len(g) == len(month_days(m)) and month_days(m)[0] > CAP_START]
     rows = []
@@ -253,18 +263,86 @@ def cmd_convergence(args):
             as_of = days[0] - timedelta(days=2) + timedelta(days=k)  # k known days at this close
             s = split_month(df, m, as_of)
             rows.append({"month": m, "known": s["known_days"], "err_pct": (s["fair"] / final - 1) * 100})
-    e = pd.DataFrame(rows)
-    out = e.groupby("known").err_pct.agg(
+    return pd.DataFrame(rows)
+
+
+def convergence_summary(e):
+    return e.groupby("known").err_pct.agg(
         months="count",
         mean="mean",
         mean_abs=lambda x: x.abs().mean(),
         p90_abs=lambda x: x.abs().quantile(0.9),
-        worst=lambda x: x.abs().max())
+        worst=lambda x: x.abs().max()).reset_index()
+
+
+def cmd_convergence(args):
+    """Error of the estimate vs the final index, by how many days of the month are known.
+    The rest of the month is assumed to look like the last 7 known days."""
+    e = convergence_errors(load_daily())
+    months = sorted(e.month.unique())
+    out = convergence_summary(e).set_index("known")
     print(f"Estimate error vs final MCX index, {len(months)} months {months[0]} to {months[-1]}")
     print("  rest of month assumed = last 7 known days (volume-weighted); errors in %")
     print(out.loc[[k for k in (0, 1, 3, 5, 7, 10, 14, 18, 21, 25, 28) if k in out.index]].round(1).to_string())
     e.to_csv(DATA_DIR / "convergence_errors.csv", index=False)
     print(f"wrote {(DATA_DIR / 'convergence_errors.csv').relative_to(ROOT)}")
+
+
+# ---------------------------------------------------------------- dashboard data
+
+DASHBOARD_DIR = DATA_DIR / "dashboard"
+DASHBOARD_FROM = "2023-05"  # first full month under the Rs 10 cap
+
+
+def cmd_export(args):
+    """Small CSVs for the dashboard, all from the same functions as the commands above."""
+    df = load_daily()
+    DASHBOARD_DIR.mkdir(exist_ok=True)
+    out = {}
+
+    out["daily"] = df[["delivery_date", "avg_mcp", "vw_mcp", "min_mcp", "max_mcp", "mcv_mwh"]].assign(
+        delivery_date=df.delivery_date.dt.strftime("%Y-%m-%d"))
+
+    m = monthly_table(df)
+    m.index.name = "month"
+    out["monthly"] = m.reset_index().round(2)
+
+    rows = []  # each delivery day: index of the month so far, and the estimate once it is known
+    for month, g in df[df.month >= DASHBOARD_FROM].groupby("month"):
+        for d in g.delivery_date:
+            k = known_days(df, month, (d - timedelta(days=1)).date())
+            est = split_month(df, month, (d - timedelta(days=1)).date())
+            rows.append({"month": month, "delivery_date": d.strftime("%Y-%m-%d"), "day": d.day,
+                         "avg_mcp": k.avg_mcp.iloc[-1], "mcv_mwh": k.mcv_mwh.iloc[-1],
+                         "index_so_far": round(settlement_index(k), 2), "estimate": round(est["fair"], 2)})
+    out["contract_days"] = pd.DataFrame(rows)
+
+    closes = pd.read_csv(MCX_DAILY, parse_dates=["trade_date"], dtype={"contract": str})
+    rows = []
+    for _, c in closes.iterrows():
+        t = c.trade_date.date()
+        sc = split_month(df, c.contract, t)
+        rows.append({"trade_date": f"{t}", "contract": c.contract, "close": c.close_rs_mwh,
+                     "date_inferred": c.date_inferred, "known_days": sc["known_days"],
+                     "index_so_far": round(sc["known_index"], 2) if sc["known_days"] else None,
+                     "estimate": round(sc["fair"], 2),
+                     "gap": round(c.close_rs_mwh - sc["fair"], 2),
+                     "implied_rest": round(implied_rest(sc, c.close_rs_mwh), 2)})
+    out["futures"] = pd.DataFrame(rows)
+
+    b = load_blocks()
+    b = b[b.delivery_date >= DASHBOARD_FROM]
+    b = b.assign(month=b.delivery_date.str[:7], hour=(b.block - 1) // 4)
+    out["hourly"] = (b.groupby(["month", "hour"])
+                     .agg(avg_mcp=("mcp_rs_mwh", "mean"), avg_mcv_mw=("mcv_mw", "mean"))
+                     .round(1).reset_index())
+
+    out["convergence"] = convergence_summary(convergence_errors(df)).round(2)
+
+    for name, table in out.items():
+        path = DASHBOARD_DIR / f"{name}.csv"
+        table.to_csv(path, index=False)
+        print(f"wrote {path.relative_to(ROOT)}  {len(table)} rows")
 
 
 # ---------------------------------------------------------------- fetch the current month
@@ -273,7 +351,7 @@ def cmd_fetch(args):
     """Fetch delivery days of one month up to the latest published day (power_market only does full months)."""
     bess = load_bess()
     days = month_days(args.month)
-    now = datetime.now()
+    now = datetime.now(IST).replace(tzinfo=None)
     latest = (now.date() + timedelta(days=1)) if now.hour >= 15 else now.date()  # DAM for D+1 out by 15:00
     last = min(days[-1], latest)
     if last < days[0]:
@@ -312,11 +390,12 @@ def main():
     fv.add_argument("--as-of", help="trading day (YYYY-MM-DD); default: latest the data allows")
     fv.add_argument("--rest", type=float, help="assumed average for unknown days (Rs/MWh)")
     sub.add_parser("convergence", help="estimate error vs final index, by days known")
+    sub.add_parser("export", help="write the dashboard's CSVs to data/dashboard/")
     fe = sub.add_parser("fetch", help="fetch one month of IEX DAM up to the latest published day")
     fe.add_argument("--month", required=True, help="YYYY-MM")
     args = p.parse_args()
     {"daily": cmd_daily, "index": cmd_index, "fairvalue": cmd_fairvalue,
-     "convergence": cmd_convergence, "fetch": cmd_fetch}[args.cmd](args)
+     "convergence": cmd_convergence, "export": cmd_export, "fetch": cmd_fetch}[args.cmd](args)
 
 
 if __name__ == "__main__":
