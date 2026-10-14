@@ -59,6 +59,26 @@ def log_request(url, status, body=b""):
                     hashlib.sha256(body).hexdigest() if body else ""])
 
 
+RETRY_WAITS = (2, 4, 8, 16)  # seconds, after a dropped connection
+
+
+def download(url):
+    """GET with retries on network errors (not on HTTP errors, which the caller handles)."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+    for wait in (*RETRY_WAITS, None):
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return resp.read()
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            if wait is None:
+                log_request(url, "network error")
+                sys.exit(f"gave up on {url}: {e}")
+            print(f"    network error ({e}); retrying in {wait} s")
+            clock.sleep(wait)
+
+
 def holidays_seen():
     """Days NSE answered 404 for (no bhavcopy): not fetched again."""
     if not MANIFEST.exists():
@@ -86,10 +106,8 @@ def cmd_nse(args):
         if i:
             clock.sleep(NSE_DELAY_SECONDS)
         url = NSE_URL.format(d=d)
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                body = resp.read()
+            body = download(url)
         except urllib.error.HTTPError as e:
             log_request(url, e.code)
             if e.code == 404:
@@ -124,10 +142,8 @@ MCX_LAUNCH = date(2025, 7, 10)
 
 
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            body = resp.read()
+        body = download(url)
     except urllib.error.HTTPError as e:
         log_request(url, e.code)
         sys.exit(f"HTTP {e.code} for {url}")
