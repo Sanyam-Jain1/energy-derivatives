@@ -221,6 +221,27 @@ def nse_rows():
     return df
 
 
+CONTRACTS_CSV = DATA_DIR / "contracts.csv"
+
+
+def contract_table(df):
+    """One row per exchange and contract. final_settle is the settlement price on the expiry
+    day, so it is filled only once a contract has expired and that day is in the data."""
+    rows = []
+    for (ex, c), g in df.sort_values("trade_date").groupby(["exchange", "contract"]):
+        expiry = g.expiry.iloc[-1]
+        last = g[g.trade_date == expiry]
+        traded = g[g.lots > 0]
+        rows.append({"exchange": ex, "contract": c, "expiry": expiry,
+                     "first_listed": g.trade_date.iloc[0],
+                     "first_traded": traded.trade_date.iloc[0] if len(traded) else None,
+                     "last_date": g.trade_date.iloc[-1], "days_listed": len(g), "days_traded": len(traded),
+                     "lots": int(g.lots.sum()), "mwh": int(g.mwh.sum()),
+                     "value_rs": g.value_rs.sum() if ex == "NSE" else None,
+                     "final_settle": last.settle.iloc[0] if len(last) and ex == "NSE" else None})
+    return pd.DataFrame(rows)
+
+
 def cmd_build(args):
     parts = [f() for f, d in ((nse_rows, NSE_DIR), (mcx_rows, MCX_DIR)) if d.exists()]
     df = pd.concat([p for p in parts if len(p)], ignore_index=True).reindex(columns=COLUMNS)
@@ -233,6 +254,9 @@ def cmd_build(args):
     DATA_DIR.mkdir(exist_ok=True)
     df.to_csv(FUTURES_CSV, index=False)
     print(f"wrote {FUTURES_CSV.relative_to(ROOT)}  {len(df)} rows")
+    contracts = contract_table(df)
+    contracts.to_csv(CONTRACTS_CSV, index=False)
+    print(f"wrote {CONTRACTS_CSV.relative_to(ROOT)}  {len(contracts)} contracts")
     for ex, g in df.groupby("exchange"):
         print(f"  {ex}: {g.trade_date.nunique()} days {g.trade_date.min()} to {g.trade_date.max()}, "
               f"{g.contract.nunique()} contracts {g.contract.min()} to {g.contract.max()}")
@@ -240,33 +264,47 @@ def cmd_build(args):
 
 # ---------------------------------------------------------------- checks
 
-DAILY_LIMIT = 0.09  # widest daily price band (6%, widening to 9%)
+DAILY_LIMIT = 0.09  # widest daily price band (6%, widening to 9%), around the previous settlement
 
 
 def cmd_check(args):
-    """Sanity checks on data/futures_daily.csv. Prints findings; changes nothing."""
-    df = pd.read_csv(FUTURES_CSV, dtype={"contract": str})
+    """Sanity checks on data/futures_daily.csv. Prints findings by kind; changes nothing."""
+    df = pd.read_csv(FUTURES_CSV, dtype={"contract": str}).sort_values("trade_date")
     traded = df[df.lots > 0]
-    problems = []
-    bad = traded[(traded.low > traded[["open", "close"]].min(axis=1)) | (traded.high < traded[["open", "close"]].max(axis=1))]
-    problems += [f"{r.exchange} {r.trade_date} {r.contract}: low/high do not bracket open/close" for r in bad.itertuples()]
-    nse = traded[traded.exchange == "NSE"].copy()
-    implied = nse.value_rs / nse.mwh
-    off = nse[(implied < nse.low * 0.999) | (implied > nse.high * 1.001)]
-    problems += [f"NSE {r.trade_date} {r.contract}: value/MWh outside the day's range" for r in off.itertuples()]
-    for (ex, c), g in df.sort_values("trade_date").groupby(["exchange", "contract"]):
-        g = g[g.lots > 0]
-        move = g.close.pct_change().abs()
-        for r, m in zip(g.itertuples(), move):
-            if m > DAILY_LIMIT + 0.005:
-                problems.append(f"{ex} {r.trade_date} {c}: close moved {m:.1%} since the last traded day")
-    per_day = df.groupby(["exchange", "trade_date"]).contract.nunique()
-    for (ex, d), n in per_day.items():
-        if n < 3:
-            problems.append(f"{ex} {d}: only {n} contracts listed")
-    print(f"{len(df)} rows checked, {len(problems)} findings")
-    for p in problems:
-        print("  " + p)
+    found = {}
+
+    def add(kind, text):
+        found.setdefault(kind, []).append(text)
+
+    for r in traded.itertuples():
+        if r.low > min(r.open, r.close) or r.high < max(r.open, r.close):
+            add("low/high do not bracket open and close", f"{r.exchange} {r.trade_date} {r.contract}")
+    nse = df[df.exchange == "NSE"].copy()
+    nse["prev_settle"] = nse.groupby("contract").settle.shift()
+    for r in nse[nse.lots > 0].itertuples():
+        if r.value_rs / r.mwh < r.low * 0.999 or r.value_rs / r.mwh > r.high * 1.001:
+            add("NSE traded value / MWh outside the day's range", f"{r.trade_date} {r.contract}")
+        if pd.notna(r.prev_settle) and r.prev_settle > 0:
+            for name, v in (("high", r.high), ("low", r.low)):
+                move = v / r.prev_settle - 1
+                if abs(move) > DAILY_LIMIT + 0.001:
+                    add("NSE price beyond 9% of the previous settlement",
+                        f"{r.trade_date} {r.contract} {name} {v:.0f} vs {r.prev_settle:.0f} ({move:+.1%})")
+    for (ex, d), n in df.groupby(["exchange", "trade_date"]).contract.nunique().items():
+        if ex == "NSE" and n < 3:
+            add("NSE days with fewer than 3 contracts listed", f"{d}: {n}")
+
+    print(f"{len(df)} rows checked")
+    for kind, items in found.items():
+        print(f"  {kind}: {len(items)}")
+        for t in items[:args.show]:
+            print(f"    {t}")
+    if not found:
+        print("  no findings")
+    mcx = df[df.exchange == "MCX"]
+    if len(mcx):
+        print(f"  MCX coverage: {', '.join(sorted(mcx.contract.unique()))} only "
+              f"(expired contracts are not available from Upstox without a login)")
 
 
 def main():
@@ -277,7 +315,8 @@ def main():
     n.add_argument("--to", dest="end", help="last trade date (default: today, IST)")
     sub.add_parser("mcx", help="fetch MCX electricity futures still trading, via Upstox")
     sub.add_parser("build", help="raw/ -> data/futures_daily.csv")
-    sub.add_parser("check", help="sanity checks on data/futures_daily.csv")
+    ck = sub.add_parser("check", help="sanity checks on data/futures_daily.csv")
+    ck.add_argument("--show", type=int, default=5, help="examples to print per kind of finding")
     args = p.parse_args()
     {"nse": cmd_nse, "mcx": cmd_mcx, "build": cmd_build, "check": cmd_check}[args.cmd](args)
 
