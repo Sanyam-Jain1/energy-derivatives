@@ -1,7 +1,9 @@
 # energy-derivatives
 
-Daily prices of India's monthly electricity futures, on both exchanges, for research
-against the IEX day-ahead market (IEX data lives in the sibling `power_market` repo).
+Daily prices of India's monthly electricity futures, for research against the IEX
+day-ahead market (IEX data lives in the sibling `power_market` repo). Current focus:
+**NSE, historical data only**. MCX is parked (expired MCX contracts are not reachable
+from here); its code and the three contracts already saved stay in the repo unused.
 
 | | MCX | NSE |
 |---|---|---|
@@ -16,6 +18,8 @@ against the IEX day-ahead market (IEX data lives in the sibling `power_market` r
     python futures.py mcx                                         # MCX contracts still trading, via Upstox
     python futures.py build                                       # raw/ -> data/futures_daily.csv
     python futures.py check                                       # sanity checks, prints findings
+    python futures.py iex [--fetch]                               # IEX DAM daily -> data/iex_daily.csv
+    python futures.py join                                        # NSE vs IEX known days -> data/nse_vs_iex.csv
 
 Python 3 with pandas. Re-running `nse` fetches only missing days; `mcx` saves a new
 snapshot each run.
@@ -76,6 +80,44 @@ across exchanges rather than IEX alone.
   `check --show 20`). Most are on contracts that trade only now and then, where the
   previous settlement was a theoretical price, but not all (e.g. Feb-26 on 2 Feb 2026).
   Not yet explained; kept as published.
+
+## IEX side
+
+`data/iex_daily.csv`: one row per DAM delivery day from Jun 2025, with the simple and the
+volume-weighted (VW) average price, cheapest and dearest block, and cleared MWh. Complete
+months are read from `../power_market/raw/dam` with its own parser (set `POWER_MARKET_DIR`
+if it lives elsewhere); the current month to date is fetched into `raw/iex/` by
+`iex --fetch`.
+
+`data/nse_vs_iex.csv`: one row per NSE contract and trade date. A close on trade date T
+knows DAM delivery days up to T+1 (DAM is out by 15:00, NSE trades until 23:30).
+
+| column | meaning |
+|---|---|
+| days_known, known_mwh, vw_so_far | the delivery month's days known at that close, their MWh and VW price |
+| last_7d_vw | VW price of the last 7 known days |
+| implied_rest | VW price the unknown days need for the settlement to be right (their volume set to the last 7 days' mean) |
+| final_vw | IEX VW over the whole month (complete months) |
+| nse_final | NSE's final settlement |
+
+### First look: settlement price vs the final (13 contracts, Sep-25 to Sep-26)
+
+Mean absolute error of NSE's daily settlement price against the contract's final
+settlement, next to a naive estimate (known days, rest at the last 7 days' VW price):
+
+| when | rows | rows traded | NSE | naive | NSE bias |
+|---|---:|---:|---:|---:|---:|
+| 3 months before the month | 256 | 6 | 18.2% | 15.9% | +3.5% |
+| 2 months before | 266 | 66 | 18.3% | 15.6% | +4.7% |
+| 1 month before | 264 | 250 | 15.1% | 13.9% | +6.6% |
+| 1-10 days known | 90 | 90 | 8.1% | 8.7% | +4.0% |
+| 11-20 days known | 94 | 94 | 6.1% | 7.3% | +2.4% |
+| 21-30 days known | 89 | 89 | 1.6% | 2.1% | +0.4% |
+
+Before the month NSE's price was further off than the naive estimate and sat above the
+final on average; inside the month it was slightly closer. Thirteen contracts, with
+neighbouring days heavily overlapping, so this is a lead, not a result. Far-month
+settlement prices are mostly theoretical (few trades).
 
 ## data/futures_daily.csv
 
