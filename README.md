@@ -20,6 +20,7 @@ from here); its code and the three contracts already saved stay in the repo unus
     python futures.py check                                       # sanity checks, prints findings
     python futures.py iex [--fetch]                               # IEX DAM daily -> data/iex_daily.csv
     python futures.py join                                        # NSE vs IEX known days -> data/nse_vs_iex.csv
+    python futures.py export                                      # dashboard CSVs -> data/dashboard/
 
 Python 3 with pandas. Re-running `nse` fetches only missing days; `mcx` saves a new
 snapshot each run.
@@ -80,6 +81,14 @@ across exchanges rather than IEX alone.
   `check --show 20`). Most are on contracts that trade only now and then, where the
   previous settlement was a theoretical price, but not all (e.g. Feb-26 on 2 Feb 2026).
   Not yet explained; kept as published.
+
+## Dashboard
+
+[NSE Power Futures](https://claude.ai/artifact/7bf1DynZLpo775GTQafYfG) (private until
+shared): pick a contract to see its settlement price from listing to expiry, the IEX
+month filling in, volume and open interest; plus every contract's distance from its
+final by days to expiry, all contracts over time, and NSE finals against IEX averages.
+Its data is `data/dashboard/*.csv` from `python futures.py export`.
 
 ## IEX side
 

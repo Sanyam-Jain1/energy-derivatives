@@ -8,6 +8,7 @@ Standard library plus pandas. Run from the terminal:
     python futures.py check                                       # sanity checks, prints findings
     python futures.py iex [--fetch]                               # IEX DAM daily -> data/iex_daily.csv
     python futures.py join                                        # NSE vs IEX known days -> data/nse_vs_iex.csv
+    python futures.py export                                      # dashboard CSVs -> data/dashboard/
 
 Raw data. raw/ holds what the sources published and is never edited. Each NSE
 trading day is one file, raw/nse/elecmbl_YYYYMMDD.csv: the ELECMBL rows of that
@@ -383,6 +384,46 @@ def cmd_join(args):
     print(f"wrote {NSE_IEX_CSV.relative_to(ROOT)}  {len(out)} rows; IEX data to {last_day.date()}")
 
 
+# ---------------------------------------------------------------- dashboard data
+
+DASHBOARD_DIR = DATA_DIR / "dashboard"
+
+
+def cmd_export(args):
+    """Small CSVs for the NSE dashboard, built only from the tables above."""
+    fut = pd.read_csv(FUTURES_CSV, dtype={"contract": str}).query("exchange == 'NSE'")
+    join = pd.read_csv(NSE_IEX_CSV, dtype={"contract": str})
+    iex = pd.read_csv(IEX_DAILY_CSV)
+    con = pd.read_csv(CONTRACTS_CSV, dtype={"contract": str}).query("exchange == 'NSE'")
+    DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+
+    days = fut[["trade_date", "contract", "expiry", "open", "high", "low", "close", "settle", "lots",
+                "open_interest_lots"]].merge(
+        join[["trade_date", "contract", "days_known", "vw_so_far", "last_7d_vw", "implied_rest",
+              "final_vw", "nse_final"]], on=["trade_date", "contract"], how="left")
+    days["days_to_expiry"] = (pd.to_datetime(days.expiry) - pd.to_datetime(days.trade_date)).dt.days
+    days["pct_from_final"] = ((days.settle / days.nse_final - 1) * 100).round(2)
+    for c in ("open", "high", "low"):  # untraded days are published as 0
+        days.loc[days.lots == 0, c] = None
+
+    iex["month"] = iex.delivery_date.str[:7]
+    iex["pv"] = iex.vw_avg * iex.mcv_mwh
+    g = iex.groupby("month")
+    month = pd.DataFrame({"iex_days": g.size(), "iex_vw": g.pv.sum() / g.mcv_mwh.sum(),
+                          "iex_simple": g.apply(lambda x: (x.simple_avg * x.blocks).sum() / x.blocks.sum(),
+                                                include_groups=False)}).round(2)
+    con = con[["contract", "expiry", "first_listed", "first_traded", "days_listed", "days_traded", "lots",
+               "mwh", "value_rs", "final_settle"]].merge(month, left_on="contract", right_index=True, how="left")
+    con["final_vs_iex_vw_pct"] = ((con.final_settle / con.iex_vw - 1) * 100).round(2)
+
+    out = {"contract_days": days, "iex_daily": iex[["delivery_date", "vw_avg", "simple_avg", "min_block",
+                                                     "max_block", "mcv_mwh"]], "contracts": con}
+    for name, t in out.items():
+        path = DASHBOARD_DIR / f"{name}.csv"
+        t.to_csv(path, index=False)
+        print(f"wrote {path.relative_to(ROOT)}  {len(t)} rows")
+
+
 # ---------------------------------------------------------------- checks
 
 DAILY_LIMIT = 0.09  # widest daily price band (6%, widening to 9%), around the previous settlement
@@ -439,11 +480,12 @@ def main():
     ix = sub.add_parser("iex", help="IEX DAM daily table from power_market (+ current month here)")
     ix.add_argument("--fetch", action="store_true", help="first fetch the current month to date from IEX")
     sub.add_parser("join", help="NSE contract-days against the IEX days known at each close")
+    sub.add_parser("export", help="CSVs for the NSE dashboard -> data/dashboard/")
     ck = sub.add_parser("check", help="sanity checks on data/futures_daily.csv")
     ck.add_argument("--show", type=int, default=5, help="examples to print per kind of finding")
     args = p.parse_args()
     {"nse": cmd_nse, "mcx": cmd_mcx, "build": cmd_build, "check": cmd_check,
-     "iex": cmd_iex, "join": cmd_join}[args.cmd](args)
+     "iex": cmd_iex, "join": cmd_join, "export": cmd_export}[args.cmd](args)
 
 
 if __name__ == "__main__":
