@@ -58,6 +58,14 @@ volume clears in the evening blocks at the Rs 10,000 cap. So NSE's contract is a
 product from MCX's, not a mispriced copy. The small remaining gap fits NSE averaging
 across exchanges rather than IEX alone.
 
+**Which days it covers.** Contracts expire a day or more before month-end, and NSE's final
+appears in the expiry-day file, so it can only use the delivery days IEX has published by
+then: days 1 to expiry + 1. In 10 of 13 months that is the whole month. In the other three
+(Nov-25, May-26, Aug-26) the final matches those days better than the full month (gap
+0.2%, 0.1%, 1.0% against 0.8%, 0.7%, 1.5%). Three cases, so evidence rather than proof;
+`settlement_days()` in futures.py uses this rule and NSE's contract specification would
+confirm it. The table above is the full month; `data/dashboard/contracts.csv` has both.
+
 | month | IEX block-VW | NSE final | gap | IEX simple |
 |---|---:|---:|---:|---:|
 | 2025-09 | 3,438 | 3,453 | +0.4% | 3,580 |
@@ -103,30 +111,33 @@ knows DAM delivery days up to T+1 (DAM is out by 15:00, NSE trades until 23:30).
 
 | column | meaning |
 |---|---|
-| days_known, known_mwh, vw_so_far | the delivery month's days known at that close, their MWh and VW price |
+| settle_days | delivery days the final covers: 1 to expiry + 1 |
+| days_known, known_mwh, vw_so_far | those days known at that close, their MWh and VW price |
 | last_7d_vw | VW price of the last 7 known days |
 | implied_rest | VW price the unknown days need for the settlement to be right (their volume set to the last 7 days' mean) |
-| final_vw | IEX VW over the whole month (complete months) |
+| final_vw | IEX VW over all settle_days (once published) |
 | nse_final | NSE's final settlement |
 
-### First look: settlement price vs the final (13 contracts, Sep-25 to Sep-26)
+### First look: settlement price vs the final (`python futures.py firstlook`)
 
-Mean absolute error of NSE's daily settlement price against the contract's final
-settlement, next to a naive estimate (known days, rest at the last 7 days' VW price):
+Traded days only (a day with no trades has a price NSE sets itself), expiry days left out
+(the settlement is then the final itself), 13 settled contracts Sep-25 to Sep-26. Mean
+absolute error against the final, NSE's settlement price next to a naive estimate (known
+settlement days at their VW price, the rest at the last 7 days' VW price):
 
-| when | rows | rows traded | NSE | naive | NSE bias |
-|---|---:|---:|---:|---:|---:|
-| 3 months before the month | 256 | 6 | 18.2% | 15.9% | +3.5% |
-| 2 months before | 266 | 66 | 18.3% | 15.6% | +4.7% |
-| 1 month before | 264 | 250 | 15.1% | 13.9% | +6.6% |
-| 1-10 days known | 90 | 90 | 8.1% | 8.7% | +4.0% |
-| 11-20 days known | 94 | 94 | 6.1% | 7.3% | +2.4% |
-| 21-30 days known | 89 | 89 | 1.6% | 2.1% | +0.4% |
+| when | rows | contracts | NSE | naive | NSE bias | NSE closer |
+|---|---:|---:|---:|---:|---:|---:|
+| 3 months before the month | 6 | 3 | 31.9% | 24.4% | +31.9% | 0% of days |
+| 2 months before | 66 | 10 | 16.8% | 11.7% | +11.5% | 27% |
+| 1 month before | 250 | 13 | 14.7% | 13.4% | +6.5% | 54% |
+| 1-10 days known | 90 | 13 | 8.1% | 8.7% | +4.0% | 50% |
+| 11-20 days known | 94 | 13 | 6.1% | 7.2% | +2.4% | 71% |
+| 21+ days known | 81 | 13 | 1.8% | 2.3% | +0.5% | 60% |
 
-Before the month NSE's price was further off than the naive estimate and sat above the
-final on average; inside the month it was slightly closer. Thirteen contracts, with
-neighbouring days heavily overlapping, so this is a lead, not a result. Far-month
-settlement prices are mostly theoretical (few trades).
+Before the delivery month the traded price sat above the final on average and was no
+better than the naive estimate; from about 10 days into the month it was closer than the
+naive estimate on most days. Thirteen contracts and heavily overlapping days: a lead, not
+a result.
 
 ## data/futures_daily.csv
 

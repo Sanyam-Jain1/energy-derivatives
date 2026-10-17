@@ -8,6 +8,7 @@ Standard library plus pandas. Run from the terminal:
     python futures.py check                                       # sanity checks, prints findings
     python futures.py iex [--fetch]                               # IEX DAM daily -> data/iex_daily.csv
     python futures.py join                                        # NSE vs IEX known days -> data/nse_vs_iex.csv
+    python futures.py firstlook                                   # settlement vs final, traded days only
     python futures.py export                                      # dashboard CSVs -> data/dashboard/
 
 Raw data. raw/ holds what the sources published and is never edited. Each NSE
@@ -339,41 +340,51 @@ NSE_IEX_CSV = DATA_DIR / "nse_vs_iex.csv"
 RECENT_DAYS = 7  # volume assumed for unknown days: the mean of the last 7 known days
 
 
+def settlement_days(contract, expiry):
+    """Delivery days NSE's final settlement covers: the month's days IEX has published by the
+    expiry date, i.e. up to expiry + 1 (DAM for day D is out on D-1), never past month-end.
+    Inferred from the 3 contracts expiring 2+ days before month-end (README)."""
+    first = pd.Timestamp(contract + "-01")
+    last = min(pd.Timestamp(expiry) + pd.Timedelta(days=1), first + pd.offsets.MonthEnd(0))
+    return first, last
+
+
 def cmd_join(args):
     """One row per NSE contract and trade date, with what IEX had published by that close.
 
-    NSE settles on the month's IEX volume-weighted price (README). DAM prices for day D are
-    public by 15:00 on D-1 and NSE commodities trade until 23:30, so the close on trade date T
-    knows delivery days up to T+1. Columns:
-      days_known, known_mwh, vw_so_far  the delivery month's known days and their VW price
-      final_vw                          IEX VW over the whole month (complete months only)
-      implied_rest                      VW the unknown days need for settle to equal the final
-                                        index, with their volume set to the last 7 days' mean
+    NSE settles on the IEX volume-weighted price of the delivery days published by expiry
+    (settlement_days). DAM prices for day D are public by 15:00 on D-1 and NSE commodities
+    trade until 23:30, so the close on trade date T knows delivery days up to T+1. Columns:
+      settle_days                       delivery days the final settlement covers
+      days_known, known_mwh, vw_so_far  those days known at this close, their MWh and VW price
+      final_vw                          IEX VW over all settle_days (once all are published)
+      implied_rest                      VW the unknown settle_days need for the settlement price
+                                        to equal final_vw, their volume set to the last 7 days' mean
     """
     fut = pd.read_csv(FUTURES_CSV, dtype={"contract": str})
     fut = fut[fut.exchange == "NSE"]
     iex = pd.read_csv(IEX_DAILY_CSV, parse_dates=["delivery_date"])
-    iex["month"] = iex.delivery_date.dt.strftime("%Y-%m")
     iex["pv"] = iex.vw_avg * iex.mcv_mwh
     last_day = iex.delivery_date.max()
-    months = {}
-    for m, g in iex.groupby("month"):
-        n = pd.Period(m).days_in_month
-        months[m] = (n, g.pv.sum() / g.mcv_mwh.sum() if len(g) == n else None)
     finals = pd.read_csv(CONTRACTS_CSV, dtype={"contract": str}).query("exchange == 'NSE'").set_index("contract").final_settle
+    windows = {}
+    for c, expiry in fut.groupby("contract").expiry.last().items():
+        first, last = settlement_days(c, expiry)
+        days = iex[iex.delivery_date.between(first, last)]
+        n = (last - first).days + 1
+        windows[c] = (first, last, n, days.pv.sum() / days.mcv_mwh.sum() if len(days) == n else None)
     rows = []
     for r in fut.itertuples():
-        t = pd.Timestamp(r.trade_date)
-        cutoff = min(t + pd.Timedelta(days=1), last_day)
-        known = iex[(iex.month == r.contract) & (iex.delivery_date <= cutoff)]
+        first, last, n_days, final_vw = windows[r.contract]
+        cutoff = min(pd.Timestamp(r.trade_date) + pd.Timedelta(days=1), last_day)
+        known = iex[iex.delivery_date.between(first, min(cutoff, last))]
         recent = iex[iex.delivery_date <= cutoff].tail(RECENT_DAYS)
-        n_days, final_vw = months.get(r.contract, (pd.Period(r.contract).days_in_month, None))
         known_mwh = known.mcv_mwh.sum()
         rest_mwh = (n_days - len(known)) * recent.mcv_mwh.mean()
         price = r.settle if pd.notna(r.settle) else r.close
         rest = (price * (known_mwh + rest_mwh) - known.pv.sum()) / rest_mwh if rest_mwh else None
         rows.append({"trade_date": r.trade_date, "contract": r.contract, "settle": r.settle, "close": r.close,
-                     "lots": r.lots, "days_in_month": n_days, "days_known": len(known),
+                     "lots": r.lots, "settle_days": n_days, "days_known": len(known),
                      "known_mwh": round(known_mwh), "vw_so_far": round(known.pv.sum() / known_mwh, 2) if len(known) else None,
                      "last_7d_vw": round(recent.pv.sum() / recent.mcv_mwh.sum(), 2),
                      "implied_rest": round(rest, 2) if rest is not None else None,
@@ -382,6 +393,35 @@ def cmd_join(args):
     out = pd.DataFrame(rows)
     out.to_csv(NSE_IEX_CSV, index=False)
     print(f"wrote {NSE_IEX_CSV.relative_to(ROOT)}  {len(out)} rows; IEX data to {last_day.date()}")
+
+
+def cmd_firstlook(args):
+    """How far NSE's settlement price was from the final, against a naive estimate, on traded
+    days only (a day with no trades has a price NSE sets itself, not a market price)."""
+    d = pd.read_csv(NSE_IEX_CSV, dtype={"contract": str})
+    d = d[d.nse_final.notna() & d.settle.notna() & (d.lots > 0)]
+    d = d[d.days_known < d.settle_days].copy()  # expiry day: the settlement is the final itself
+    iex = pd.read_csv(IEX_DAILY_CSV, parse_dates=["delivery_date"])
+    t = pd.to_datetime(d.trade_date)
+    # naive: known days at their VW, the rest at the last 7 days' VW, volume as in implied_rest
+    rest_mwh = [(r.settle_days - r.days_known) * iex[iex.delivery_date <= tt + pd.Timedelta(days=1)].tail(RECENT_DAYS).mcv_mwh.mean()
+                for r, tt in zip(d.itertuples(), t)]
+    d["rest_mwh"] = rest_mwh
+    d["naive"] = (d.vw_so_far.fillna(0) * d.known_mwh + d.last_7d_vw * d.rest_mwh) / (d.known_mwh + d.rest_mwh)
+    d["err_nse"] = (d.settle / d.nse_final - 1) * 100
+    d["err_naive"] = (d.naive / d.nse_final - 1) * 100
+    before = (pd.to_datetime(d.contract + "-01") - t).dt.days
+    d["when"] = pd.cut(before, [0, 30, 60, 1000], labels=["1 month before", "2 months before", "3 months before"])
+    d["when"] = d.when.astype(str).where(d.days_known == 0, pd.cut(d.days_known, [0, 10, 20, 31],
+                                         labels=["1-10 days known", "11-20 days known", "21+ days known"]).astype(str))
+    order = ["3 months before", "2 months before", "1 month before", "1-10 days known", "11-20 days known", "21+ days known"]
+    out = d.groupby("when").agg(rows=("err_nse", "size"), contracts=("contract", "nunique"),
+                                nse=("err_nse", lambda x: x.abs().mean()), naive=("err_naive", lambda x: x.abs().mean()),
+                                nse_bias=("err_nse", "mean"), nse_beats_naive=("err_nse", lambda x: None))
+    out["nse_beats_naive"] = d.assign(b=d.err_nse.abs() < d.err_naive.abs()).groupby("when").b.mean() * 100
+    out = out.reindex([o for o in order if o in out.index])
+    print(f"traded days only: {len(d)} rows, {d.contract.nunique()} contracts; errors in % of the final")
+    print(out.round(1).to_string())
 
 
 # ---------------------------------------------------------------- dashboard data
@@ -399,21 +439,24 @@ def cmd_export(args):
 
     days = fut[["trade_date", "contract", "expiry", "open", "high", "low", "close", "settle", "lots",
                 "open_interest_lots"]].merge(
-        join[["trade_date", "contract", "days_known", "vw_so_far", "last_7d_vw", "implied_rest",
+        join[["trade_date", "contract", "settle_days", "days_known", "vw_so_far", "last_7d_vw", "implied_rest",
               "final_vw", "nse_final"]], on=["trade_date", "contract"], how="left")
     days["days_to_expiry"] = (pd.to_datetime(days.expiry) - pd.to_datetime(days.trade_date)).dt.days
     days["pct_from_final"] = ((days.settle / days.nse_final - 1) * 100).round(2)
     for c in ("open", "high", "low"):  # untraded days are published as 0
         days.loc[days.lots == 0, c] = None
 
-    iex["month"] = iex.delivery_date.str[:7]
     iex["pv"] = iex.vw_avg * iex.mcv_mwh
-    g = iex.groupby("month")
-    month = pd.DataFrame({"iex_days": g.size(), "iex_vw": g.pv.sum() / g.mcv_mwh.sum(),
-                          "iex_simple": g.apply(lambda x: (x.simple_avg * x.blocks).sum() / x.blocks.sum(),
-                                                include_groups=False)}).round(2)
+    dates = pd.to_datetime(iex.delivery_date)
+    stats = []
+    for k in con.itertuples():  # IEX over the delivery days the final settlement covers
+        first, last = settlement_days(k.contract, k.expiry)
+        g = iex[dates.between(first, last)]
+        stats.append({"contract": k.contract, "settle_days": (last - first).days + 1, "iex_days": len(g),
+                      "iex_vw": round(g.pv.sum() / g.mcv_mwh.sum(), 2) if len(g) else None,
+                      "iex_simple": round((g.simple_avg * g.blocks).sum() / g.blocks.sum(), 2) if len(g) else None})
     con = con[["contract", "expiry", "first_listed", "first_traded", "days_listed", "days_traded", "lots",
-               "mwh", "value_rs", "final_settle"]].merge(month, left_on="contract", right_index=True, how="left")
+               "mwh", "value_rs", "final_settle"]].merge(pd.DataFrame(stats), on="contract", how="left")
     con["final_vs_iex_vw_pct"] = ((con.final_settle / con.iex_vw - 1) * 100).round(2)
 
     out = {"contract_days": days, "iex_daily": iex[["delivery_date", "vw_avg", "simple_avg", "min_block",
@@ -480,12 +523,13 @@ def main():
     ix = sub.add_parser("iex", help="IEX DAM daily table from power_market (+ current month here)")
     ix.add_argument("--fetch", action="store_true", help="first fetch the current month to date from IEX")
     sub.add_parser("join", help="NSE contract-days against the IEX days known at each close")
+    sub.add_parser("firstlook", help="settlement price vs final, traded days only, against a naive estimate")
     sub.add_parser("export", help="CSVs for the NSE dashboard -> data/dashboard/")
     ck = sub.add_parser("check", help="sanity checks on data/futures_daily.csv")
     ck.add_argument("--show", type=int, default=5, help="examples to print per kind of finding")
     args = p.parse_args()
     {"nse": cmd_nse, "mcx": cmd_mcx, "build": cmd_build, "check": cmd_check,
-     "iex": cmd_iex, "join": cmd_join, "export": cmd_export}[args.cmd](args)
+     "iex": cmd_iex, "join": cmd_join, "export": cmd_export, "firstlook": cmd_firstlook}[args.cmd](args)
 
 
 if __name__ == "__main__":
