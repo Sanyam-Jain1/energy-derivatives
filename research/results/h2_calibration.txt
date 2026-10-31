@@ -1,0 +1,10 @@
+pre-futures: 26 months 2023-05..2025-06; mean absolute error (%) by days before month start
+             M0_last30  M1_seasonal  M2_yoy  M3_blend
+days_before                                          
+7                13.46        18.14   21.73     17.63
+15               15.75        21.34   22.85     19.75
+25               15.29        21.64   23.12     20.37
+35               16.33        21.43   23.92     21.63
+overall: {'M0_last30': 15.21, 'M1_seasonal': 20.64, 'M2_yoy': 22.9, 'M3_blend': 19.84} -> chosen: M0_last30
+bias (mean error %): {'M0_last30': 3.9, 'M1_seasonal': 0.71, 'M2_yoy': 2.64, 'M3_blend': 1.67}
+sigma by bucket: {'1-10': 19.33, '11-20': 21.67, '21-30': 20.21, '31-60': 21.63}

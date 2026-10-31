@@ -1,0 +1,11 @@
+pre-futures calibration: 26 months 2023-05..2025-06, 755 decision days
+mean absolute error of the index estimate (%), by days remaining:
+        R0_last7_err  R1_ewm3_err  R2_ar_err
+bucket                                      
+1-3             0.89         0.83       0.69
+4-7             1.74         1.65       1.92
+8-14            4.74         4.46       4.27
+15-21           7.66         7.56       7.35
+22-31          13.20        12.26      10.96
+overall: {'R0_last7': np.float64(6.97), 'R1_ewm3': np.float64(6.61), 'R2_ar': np.float64(6.17)} -> chosen: R2_ar
+sigma (sd of error, %) by bucket for the chosen model: {'1-3': 0.96, '4-7': 2.45, '8-14': 5.62, '15-21': 9.41, '22-31': 15.05}
