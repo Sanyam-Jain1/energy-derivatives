@@ -275,7 +275,7 @@ def cmd_build(args):
 POWER_MARKET_DIR = Path(os.environ.get("POWER_MARKET_DIR", ROOT.parent / "power_market")).resolve()
 IEX_DIR = RAW_DIR / "iex"
 IEX_DAILY_CSV = DATA_DIR / "iex_daily.csv"
-IEX_FROM = "2025-06"  # a month before the futures launched
+IEX_FROM = "2022-04"  # first month IEX publishes in 15-minute blocks
 
 
 def load_bess():
@@ -286,12 +286,16 @@ def load_bess():
     return bess
 
 
-def fetch_iex_month_to_date(bess):
-    """DAM for the current month up to the latest published day (D+1 is out by 15:00 IST)."""
+def fetch_iex_month_to_date(bess, month=None):
+    """DAM for one month (default: the current one) up to the latest published day
+    (D+1 is out by 15:00 IST). A finished month is saved as raw/iex/dam_YYYY-MM.html."""
     now = datetime.now(IST)
-    first = now.date().replace(day=1)
-    last = now.date() + timedelta(days=1) if now.hour >= 15 else now.date()
-    path = IEX_DIR / f"dam_{first:%Y-%m}_to_{last:%d}.html"
+    first = date.fromisoformat(month + "-01") if month else now.date().replace(day=1)
+    month_end = (pd.Timestamp(first) + pd.offsets.MonthEnd(0)).date()
+    latest = now.date() + timedelta(days=1) if now.hour >= 15 else now.date()
+    last = min(month_end, latest)
+    name = f"dam_{first:%Y-%m}.html" if last == month_end else f"dam_{first:%Y-%m}_to_{last:%d}.html"
+    path = IEX_DIR / name
     if path.exists():
         print(f"  {path.relative_to(ROOT)} already saved")
         return
@@ -310,8 +314,9 @@ def cmd_iex(args):
     """data/iex_daily.csv: one row per DAM delivery day. Prices Rs/MWh, volumes MWh."""
     bess = load_bess()
     if args.fetch:
-        fetch_iex_month_to_date(bess)
+        fetch_iex_month_to_date(bess, args.month)
     complete = [p for p in sorted((POWER_MARKET_DIR / "raw" / "dam").glob("dam_*.html")) if p.stem[4:] >= IEX_FROM]
+    complete += [p for p in sorted(IEX_DIR.glob("dam_*.html")) if "_to_" not in p.name]
     partial = sorted(IEX_DIR.glob("dam_*_to_*.html"), reverse=True)  # latest first
     seen, rows = set(), []
     for p in complete + partial:  # a complete month wins over a partial one
@@ -522,6 +527,7 @@ def main():
     sub.add_parser("build", help="raw/ -> data/futures_daily.csv")
     ix = sub.add_parser("iex", help="IEX DAM daily table from power_market (+ current month here)")
     ix.add_argument("--fetch", action="store_true", help="first fetch the current month to date from IEX")
+    ix.add_argument("--month", help="with --fetch: the month to fetch, YYYY-MM (default: current)")
     sub.add_parser("join", help="NSE contract-days against the IEX days known at each close")
     sub.add_parser("firstlook", help="settlement price vs final, traded days only, against a naive estimate")
     sub.add_parser("export", help="CSVs for the NSE dashboard -> data/dashboard/")
