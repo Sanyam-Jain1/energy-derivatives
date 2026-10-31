@@ -1,0 +1,16 @@
+52 months 2022-06..2026-09; y = log(month index / last 30 days)
+sd of y = 0.159 (that is the persistence error H5 tries to reduce)
+
+  y ~ d_cdd: R2 0.034, adj 0.014
+   const -0.0051 (t -0.24)  d_cdd +0.0175 (t +1.52)
+
+  y ~ d_tmax: R2 0.000, adj -0.020
+   const -0.0063 (t -0.29)  d_tmax -0.0006 (t -0.08)
+
+  y ~ d_rain: R2 0.049, adj 0.030
+   const -0.0051 (t -0.23)  d_rain -0.0105 (t -1.52)
+
+  y ~ d_cdd + d_rain: R2 0.071, adj 0.033
+   const -0.0043 (t -0.20)  d_cdd +0.0142 (t +1.14)  d_rain -0.0093 (t -1.28)
+
+leave-one-out mean abs error: persistence 0.120, with perfect weather 0.126 (-5% lower)

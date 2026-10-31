@@ -28,9 +28,26 @@ Chronological. Each entry: what was done, what was found, what changed.
 - H3 (short premium): +3.4% per contract, p = 0.24; +7.9% in the first 7 contracts, -1.0% in
   the last 7. **Rejected** (insignificant and unstable).
 
+- H4 (price-discovery lag), near contract, 317 liquid day-pairs: today's fair-value news
+  predicts tomorrow's return (coef 0.17, t 2.47; same-day 0.57), passes its gate before
+  Bonferroni (0.068 after). Pre-registered rule (|news| > 0.5%, hold 1 day): +0.40% per trade
+  gross (t 2.26) but **-0.17% after costs** (0.57% round trip). Fails. Exploratory: bigger
+  thresholds help gross, net t < 1. The reaction mostly happens on the publication day itself
+  (DAM out 13-15h, futures trade to 23:30): intraday data would be needed to test that.
+- Other daily tests (near): today's return predicts tomorrow (t 2.27); basis predicts (t 2.76);
+  5-day momentum, weekday, OI change, reversal after 6% moves: nothing (|t| < 1.6). Next
+  contract: only same-day news and OI (t 2.9, tiny coefficient).
+- H5 weather: 9 load centres, ERA5 daily (Open-Meteo). Upper bound with PERFECT knowledge of
+  the delivery month's weather explains 3-7% of month-over-month index moves; leave-one-out
+  error worse than persistence. **Rejected.** Daily: same-day weather adds R2 0.013 over AR.
+- H15 hybrid (walk-forward by contract, 11 OOS contracts): predicted next-day return from
+  news, basis and today's return. Gross +1.13% per trade (t 2.37, 10/11 contracts) at
+  |pred| > 0.6%; **net +0.57% (t 1.20, 7/11)**; breakeven cost ~Rs 47/MWh round trip (2x
+  assumed); halves 0.59%/0.56%. Mostly shorts (41/57, +0.77%) in Mar-May 2026, which overlaps
+  the fading premium. Best candidate; not statistically established; paper-trade.
+
 ## Next steps
 
-1. H4 (price-discovery lag) and the daily-return hypotheses (H7 reversal, H8 momentum, H12
-   weekday, H16 open interest) on near-month returns.
-2. H5 weather if Open-Meteo stops rate-limiting.
+1. Quick H6 calendar-spread check; seasonality table from data.
+2. Stage 6-7 comparison and portfolio note; Stage 8 paper-trading system (code).
 4. Stage 6-8 write-up: comparison, portfolio, paper-trading design.
