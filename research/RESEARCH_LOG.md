@@ -46,8 +46,18 @@ Chronological. Each entry: what was done, what was found, what changed.
   assumed); halves 0.59%/0.56%. Mostly shorts (41/57, +0.77%) in Mar-May 2026, which overlaps
   the fading premium. Best candidate; not statistically established; paper-trade.
 
+- H15 without intercept (to separate signal from the premium drift): net +0.64%/trade (t 1.31),
+  so the signal is not just the drift. H6 calendar spread: no information (worse than "no
+  change"). Seasonality from data: only Dec and Jan rose in all years.
+- Stage 8: `paper.py` (tested). Replay Dec-25..Oct-26 with daily refits: 55 trades, +0.18% per
+  trade net, max DD 4.1% of Rs 10 lakh. Lower than the per-contract walk-forward (+0.64%):
+  the edge is sensitive to how often the model is refitted, i.e. not robust.
+- Write-up: `03_results.md`. Conclusion: no strategy statistically established; H15 is the
+  only candidate for paper trading; intraday data after the DAM result is the best next lead.
+
 ## Next steps
 
-1. Quick H6 calendar-spread check; seasonality table from data.
-2. Stage 6-7 comparison and portfolio note; Stage 8 paper-trading system (code).
-4. Stage 6-8 write-up: comparison, portfolio, paper-trading design.
+1. Paper-trade H15 daily (`python -m research.paper run`) for at least 6 more contracts.
+2. Get intraday NSE electricity futures data to test entry right after the DAM result.
+3. Get PXIL/HPX DAM and IEX green/high-price data to compute the settlement exactly.
+4. Get MCX bhavcopy history (manual download) for the NSE-MCX index spread (H13).

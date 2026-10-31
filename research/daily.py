@@ -32,6 +32,14 @@ def fair_value(iex, contract, expiry, t, ar_params):
 
 
 def panel():
+    """Research panel: rows where today, yesterday and tomorrow are all liquid."""
+    p = features()
+    ok = p.liquid & p.next_liquid & p.prev_liquid & p.ret_next.notna() & p.ret_now.notna()
+    return p[ok].copy()
+
+
+def features(contracts=None):
+    """Every near/next contract-day with the features known at its close (no filtering)."""
     iex, fut = data.iex_daily(), data.futures()
     fut = fut[fut.trade_date < fut.expiry]
     # rank contracts by expiry each day: 0 = near, 1 = next
@@ -40,6 +48,8 @@ def panel():
     params = {}
     rows = []
     for c, g in fut.groupby("contract"):
+        if contracts is not None and c not in contracts:
+            continue
         g = g.sort_values("trade_date")
         m = pd.Period(c, "M")
         if c not in params:
@@ -57,9 +67,7 @@ def panel():
         g["oi_chg"] = g.open_interest_lots / g.open_interest_lots.shift(1) - 1
         g["next_weekday"] = g.trade_date.shift(-1).dt.dayofweek
         rows.append(g)
-    p = pd.concat(rows)
-    ok = p.liquid & p.next_liquid & p.prev_liquid & p.ret_next.notna() & p.ret_now.notna()
-    return p[ok].copy()
+    return pd.concat(rows)
 
 
 def reg(p, y, xs, label):
@@ -122,7 +130,3 @@ def h4_rule(threshold=0.005):
             h = len(res) // 2
             print(f"  halves (per-trade mean): {res.net_pct.iloc[:h].mean():.3f}% / {res.net_pct.iloc[h:].mean():.3f}%")
             res.to_csv(RESULTS / "h4_trades.csv", index=False)
-
-
-if __name__ == "__main__" and False:
-    pass

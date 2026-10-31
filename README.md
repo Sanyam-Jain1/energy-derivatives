@@ -90,6 +90,14 @@ confirm it. The table above is the full month; `data/dashboard/contracts.csv` ha
   previous settlement was a theoretical price, but not all (e.g. Feb-26 on 2 Feb 2026).
   Not yet explained; kept as published.
 
+## Research (strategy search)
+
+`research/`: market notes (`01_market.md`), pre-registered hypotheses (`02_hypotheses.md`),
+results (`03_results.md`), running log (`RESEARCH_LOG.md`), code and tests
+(`python -m pytest research/tests`), paper trading (`python -m research.paper run`).
+Conclusion so far: no strategy statistically established after costs; one candidate
+(under-reaction to each day's DAM result) is being paper traded.
+
 ## Dashboard
 
 [NSE Power Futures](https://claude.ai/artifact/7bf1DynZLpo775GTQafYfG) (private until

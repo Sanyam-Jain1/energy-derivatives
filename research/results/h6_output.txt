@@ -1,0 +1,18 @@
+H6: 231 days with both near and next liquid, 13 contract pairs
+corr(mean spread, realised log change of finals) over pairs: 0.15
+MAE predicting the realised change: futures spread 0.103, zero (next = near) 0.092
+         spread   real  days
+c1                          
+2025-10   0.050 -0.210    12
+2025-11   0.037  0.147     3
+2025-12   0.067  0.174    17
+2026-01   0.072  0.005    21
+2026-02   0.025 -0.090    22
+2026-03   0.044  0.098    19
+2026-04   0.113 -0.003    21
+2026-05   0.071 -0.018    19
+2026-06   0.038  0.018    19
+2026-07  -0.019 -0.022    20
+2026-08  -0.003 -0.037    18
+2026-09   0.007  0.298    21
+2026-10  -0.148 -0.081    19
