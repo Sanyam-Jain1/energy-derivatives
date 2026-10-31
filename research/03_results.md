@@ -18,6 +18,9 @@ before the tests; anything exploratory is labelled so.
   +0.2% to +0.6% per trade depending on implementation details, t 0.3-1.3. It is the only
   candidate worth paper trading, and it most likely needs intraday execution right after the
   DAM result (13:00-15:00 IST) to be worth anything.
+- Exploratory: futures that sit far from the recent spot level drift back towards it by
+  expiry (slope ~0.8, bootstrap p 0.003), but only in the second half of the sample. It is
+  now a forward test (H18), not a result.
 
 ## Stage 3-4: pipeline and code
 
@@ -79,6 +82,24 @@ H15's best net t of 1.3 is far from any corrected threshold.
    arithmetic edge left for a daily-close trader.
 6. **The futures under-react to each day's DAM result by about 20-30%** at the close. Too
    small to pay the 0.56% round trip on most days.
+
+### Mispricing and later returns (exploratory, `results/mispricing_*.txt`)
+
+Regression of the return to expiry, ln(final/F), on the model's mispricing, ln(model/F), all
+liquid days, clustered by contract (1 = the model is right, 0 = the futures are):
+
+| Model, when | n days | slope | t (vs 0) | R2 | one point per contract | halves (1st / 2nd 7 contracts) | wild bootstrap p |
+|---|---:|---:|---:|---:|---|---|---:|
+| M0 persistence, before the month | 289 | 0.82 | 3.21 | 0.24 | 0.91 (t 1.92) | -0.05 / 1.01 | 0.003 |
+| R2 AR, delivery month, 15-31 days left | 148 | 0.65 | 4.25 | 0.26 | 0.72 (t 2.51) | 0.11 / 0.81 | 0.005 |
+| R2 AR, delivery month, 1-14 days left | 138 | 0.26-0.31 | 1.1 | 0.05 | | | |
+
+When the futures sat away from the recent spot level, they tended to move back towards it by
+expiry, but **only in Apr-Oct 2026**; in the first seven contracts the slope was about zero.
+Every leave-one-contract-out slope stays positive. Because it was found by looking and is
+unstable, it is not counted as a result; it is pre-registered as **H18** and judged only on
+contracts settling after 31 Oct 2026 (`research/forward_h18.py`; first signal: Nov-26, long,
+futures 7.8% below the last-30-day level on 13 Oct).
 
 ## Stage 6: comparison
 

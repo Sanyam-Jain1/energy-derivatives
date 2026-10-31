@@ -55,9 +55,15 @@ Chronological. Each entry: what was done, what was found, what changed.
 - Write-up: `03_results.md`. Conclusion: no strategy statistically established; H15 is the
   only candidate for paper trading; intraday data after the DAM result is the best next lead.
 
+- Mispricing regressions (brief: does model mispricing predict later returns?): pre-month
+  ln(M0/F) predicts ln(final/F), slope 0.82 (t 3.2 clustered, wild bootstrap p 0.003), but
+  slope ~0 in the first 7 contracts and ~1 in the last 7. Same pattern early in the delivery
+  month. Pre-registered as H18 for forward testing only (Nov-26 onward); first signal Nov-26 long.
+
 ## Next steps
 
-1. Paper-trade H15 daily (`python -m research.paper run`) for at least 6 more contracts.
+1. Paper-trade H15 daily (`python -m research.paper run`) and record H18 (`python -m research.forward_h18`)
+   for at least 6-8 more contracts.
 2. Get intraday NSE electricity futures data to test entry right after the DAM result.
 3. Get PXIL/HPX DAM and IEX green/high-price data to compute the settlement exactly.
 4. Get MCX bhavcopy history (manual download) for the NSE-MCX index spread (H13).

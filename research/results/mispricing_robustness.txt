@@ -1,0 +1,10 @@
+
+pre-month M0: one point per contract (n=14): slope 0.91, t 1.92, R2 0.24
+  leave-one-contract-out slope: min 0.59, max 0.95
+  halves: first 2025-09..2026-03 slope -0.05; second 2026-04..2026-10 slope 1.01
+  wild cluster bootstrap p (slope <= 0 null, one-sided): 0.003
+
+delivery 15-31 days left R2: one point per contract (n=14): slope 0.72, t 2.51, R2 0.34
+  leave-one-contract-out slope: min 0.43, max 0.71
+  halves: first 2025-09..2026-03 slope 0.11; second 2026-04..2026-10 slope 0.81
+  wild cluster bootstrap p (slope <= 0 null, one-sided): 0.005

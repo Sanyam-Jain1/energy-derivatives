@@ -1,0 +1,7 @@
+Pre-month, M0_last30: n=289 days, 14 contracts; slope 0.82 (t vs 0: 3.21, t vs 1: -0.70), intercept +1.40% (t 0.30), R2 0.24
+Pre-month, M1_seasonal: n=289 days, 14 contracts; slope 0.55 (t vs 0: 1.86, t vs 1: -1.52), intercept +0.29% (t 0.05), R2 0.12
+Pre-month, M2_yoy: n=289 days, 14 contracts; slope 0.44 (t vs 0: 1.72, t vs 1: -2.17), intercept +1.43% (t 0.27), R2 0.12
+Delivery month, R2_ar: n=286 days, 14 contracts; slope 0.59 (t vs 0: 4.14, t vs 1: -2.84), intercept -0.20% (t -0.16), R2 0.24
+  delivery month, 1-7 days left: n=68 days, 14 contracts; slope 0.26 (t vs 0: 1.13, t vs 1: -3.20), intercept -0.05% (t -0.14), R2 0.05
+  delivery month, 8-14 days left: n=70 days, 14 contracts; slope 0.31 (t vs 0: 1.13, t vs 1: -2.55), intercept -0.94% (t -0.71), R2 0.07
+  delivery month, 15-31 days left: n=148 days, 14 contracts; slope 0.65 (t vs 0: 4.25, t vs 1: -2.31), intercept +0.05% (t 0.02), R2 0.26

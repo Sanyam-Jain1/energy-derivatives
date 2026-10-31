@@ -135,3 +135,19 @@ clustered by contract, hit rate, worst contract, and a sign test.
 Five pre-registered hypotheses, a few variants each. A result is called promising only if
 it passes its own falsification test **and** its p-value survives a Bonferroni factor of 5.
 Everything tested is reported, including failures.
+
+## Added 31 Oct 2026 (after the tests above): H18, forward test only
+
+Found exploratorily (`03_results.md`, "Mispricing and later returns"): before delivery, the gap
+between the futures and the last 30 days' spot level predicted the return to expiry (slope
+0.8-0.9, bootstrap p 0.003) but only in Apr-Oct 2026. Because it was found by looking, it is
+judged **only on contracts that settle after 31 Oct 2026** (Nov-26 onward), with rules fixed now:
+
+- Signal on the 15th-to-last trading day before the delivery month (the first liquid day on
+  or after it): x = ln(M0 / F), M0 = mean daily IEX VW price of the last 30 published days.
+- Trade if |x| > 5%: 1 lot in the direction of x, at that day's settlement; hold to expiry.
+- Evaluation after 8 contracts: mean net return per contract > 0 with sign test p < 0.15,
+  and the slope of return-to-expiry on x (one point per contract) > 0. Otherwise abandoned.
+- Recorded by `python -m research.forward_h18` into `research/paper/h18/`.
+- Note: Nov-26's signal day (13 Oct) is before this pre-registration, but its outcome (the Nov
+  final) is unknown and its price path was not looked at when the rules were chosen.
